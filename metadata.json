@@ -1,0 +1,6 @@
+{
+  "name": "AI Lead Intelligence",
+  "description": "B2C Lead Intelligence & Enrichment Platform - Automated data cleaning, AI qualification, scoring, outreach generation, and quality control.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

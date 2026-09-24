@@ -235,6 +235,23 @@ const excludedOverride2 = calculateDeterministicPriority(duplicateLead, relevant
 assertEquals(excludedOverride2.priority_score, 0, 'Forces priority score to 0 when lead is a confirmed DUPLICATE');
 assertEquals(excludedOverride2.priority, 'EXCLUDED', 'Categorizes DUPLICATE lead as EXCLUDED');
 
+// AI Error Invariant: AI_ERROR must NEVER become EXCLUDED or Priority Score 0
+const aiErrorAssessment: RelevanceAssessment = {
+  ...relevantAssessment,
+  relevant: true,
+  classification: 'ai_error',
+  relevance_score: 50,
+  relevance_confidence: 0.0,
+  relevance_reason: 'Gemini API call failed',
+  ai_error: true,
+  ai_error_message: 'API error 503',
+  review_required: true,
+};
+const aiErrorPriority = calculateDeterministicPriority(baseMockLead, aiErrorAssessment, highEnrichment);
+assert(aiErrorPriority.priority !== 'EXCLUDED', 'AI_ERROR does not become EXCLUDED');
+assert(aiErrorPriority.priority_score > 0, 'AI_ERROR does not silently become Priority Score 0');
+assertEquals(aiErrorPriority.review_required, true, 'AI_ERROR routes to human review');
+
 console.log(`\n========================================`);
 console.log(`Test Results: ${passedTests} / ${totalTests} PASSED`);
 console.log(`========================================\n`);

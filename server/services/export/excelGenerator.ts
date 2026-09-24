@@ -10,6 +10,7 @@ import {
   ProcessedLead,
 } from '../../../src/types/pipeline.ts';
 import { sanitizeFormulaString } from '../ingestion/schemaDetector.ts';
+import { RECOMMENDED_GEMINI_MODEL } from '../ai/geminiClient.ts';
 
 export async function generateSalesWorkbookBuffer(
   leads: ProcessedLead[],
@@ -55,6 +56,7 @@ export async function generateSalesWorkbookBuffer(
   sheetReadme.addRow({ prop: 'Workbook Title', val: 'AI Lead Intelligence Sales Dossier' });
   sheetReadme.addRow({ prop: 'Target Product', val: context.product_name });
   sheetReadme.addRow({ prop: 'Industry Context', val: context.industry });
+  sheetReadme.addRow({ prop: 'AI Model / Engine', val: `Google Gemini (${RECOMMENDED_GEMINI_MODEL})` });
   sheetReadme.addRow({ prop: 'Generated At', val: new Date().toISOString() });
   sheetReadme.addRow({ prop: 'Total Records Evaluated', val: summary.total_cleaned_leads });
   sheetReadme.addRow({ prop: 'Pipeline Version', val: 'v1.1.0 Multi-Layer QC Verified' });
@@ -129,7 +131,9 @@ export async function generateSalesWorkbookBuffer(
       source: sanitizeFormulaString(lead.source),
       data_issues: sanitizeFormulaString(issuesStr),
       duplicate_status: lead.duplicate_status,
-      relevant: lead.relevant ? 'YES' : 'NO',
+      relevant: lead.relevance_classification === 'ai_error'
+        ? 'AI_ERROR'
+        : (lead.relevance_classification === 'uncertain' ? 'UNCERTAIN' : (lead.relevant ? 'YES' : 'NO')),
       relevance_reason: sanitizeFormulaString(lead.relevance_reason),
       relevance_confidence: `${Math.round(lead.relevance_confidence * 100)}%`,
       profile: sanitizeFormulaString(lead.profile || lead.cleaned.inquiry_text),

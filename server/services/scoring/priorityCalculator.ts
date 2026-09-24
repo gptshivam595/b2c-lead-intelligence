@@ -206,15 +206,20 @@ export function calculateDeterministicPriority(
   let reviewRequired = false;
   let reviewReason: string | undefined;
 
-  // Review override if very low confidence or borderline
-  if (relevance.relevance_confidence < 0.60) {
+  // Review override if AI error or very low confidence
+  if (relevance.classification === 'ai_error') {
+    reviewRequired = true;
+    reviewReason = 'AI evaluation error: routed to human SDR review for manual qualification.';
+  } else if (relevance.relevance_confidence < 0.60) {
     reviewRequired = true;
     reviewReason = 'Low relevance confidence requires sales lead inspection.';
   }
 
-  const reason = drivers.length > 0
-    ? `Rated ${priority} Priority (${priorityScore}/100) based on: ${drivers.slice(0, 3).join('; ')}.`
-    : `Rated ${priority} Priority (${priorityScore}/100) based on standard qualification signals.`;
+  const reason = relevance.classification === 'ai_error'
+    ? `Preliminary ${priority} Priority (${priorityScore}/100) — AI classification pending SDR review (${relevance.ai_error_message || 'API error'}).`
+    : (drivers.length > 0
+        ? `Rated ${priority} Priority (${priorityScore}/100) based on: ${drivers.slice(0, 3).join('; ')}.`
+        : `Rated ${priority} Priority (${priorityScore}/100) based on standard qualification signals.`);
 
   return {
     priority_score: priorityScore,

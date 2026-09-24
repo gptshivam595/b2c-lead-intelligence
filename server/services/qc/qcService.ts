@@ -224,9 +224,9 @@ Return JSON with:
 
 Strict JSON only.`;
 
-      const aiReviewResult = await executeGeminiWithRetry(async (ai) => {
+      const aiReviewResult = await executeGeminiWithRetry(async (ai, activeModel) => {
         const resp = await ai.models.generateContent({
-          model: RECOMMENDED_GEMINI_MODEL,
+          model: activeModel || RECOMMENDED_GEMINI_MODEL,
           contents: reviewPrompt,
           config: {
             responseMimeType: 'application/json',

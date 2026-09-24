@@ -29,6 +29,7 @@ import { runMultiLayerQC } from '../services/qc/qcService.ts';
 import { generateSalesWorkbookBuffer } from '../services/export/excelGenerator.ts';
 import { SKILLCASE_30_LEADS_DATASET } from '../data/sampleDatasets.ts';
 import { detectSchemaAndMapRows } from '../services/ingestion/schemaDetector.ts';
+import { getAiCallStats, resetAiCallStats, RECOMMENDED_GEMINI_MODEL } from '../services/ai/geminiClient.ts';
 
 // In-memory cache of current pipeline execution results
 let currentProcessedLeads: ProcessedLead[] = [];
@@ -182,117 +183,129 @@ export async function processPipelineHandler(req: Request, res: Response) {
     // 3. Deterministic Deduplication
     const { processedLeads: cleanedLeads, exactDuplicateCount, possibleDuplicateCount } = deduplicateLeads(initialLeads);
 
+    resetAiCallStats();
     const processedList: ProcessedLead[] = [];
 
-    // Process leads sequentially or in controlled parallel chunks
-    for (const lead of cleanedLeads) {
-      try {
-        // 4. AI Relevance Classification (Stage 4)
-        const relevance = await classifyLeadRelevance(lead, context);
+    // Process leads in controlled parallel chunks (concurrency: 4)
+    const CHUNK_SIZE = 4;
+    for (let i = 0; i < cleanedLeads.length; i += CHUNK_SIZE) {
+      const chunk = cleanedLeads.slice(i, i + CHUNK_SIZE);
+      const chunkResults = await Promise.all(
+        chunk.map(async (lead) => {
+          try {
+            // 4. AI Relevance Classification (Stage 4)
+            const relevance = await classifyLeadRelevance(lead, context);
 
-        // 5. AI Lead Understanding (Stage 5)
-        const enrichment = await enrichLeadUnderstanding(lead, relevance, context);
+            // 5. AI Lead Understanding (Stage 5)
+            const enrichment = await enrichLeadUnderstanding(lead, relevance, context);
 
-        // 6. Deterministic Priority Math (Stage 6)
-        const priority = calculateDeterministicPriority(lead, relevance, enrichment);
+            // 6. Deterministic Priority Math (Stage 6)
+            const priority = calculateDeterministicPriority(lead, relevance, enrichment);
 
-        // 7. Personalized Outreach (Stage 7)
-        const outreach = await generatePersonalizedOutreach(lead, relevance, priority, enrichment, context);
+            // 7. Personalized Outreach (Stage 7)
+            const outreach = await generatePersonalizedOutreach(lead, relevance, priority, enrichment, context);
 
-        // 8. Multi-Layer Quality Control (Stage 8)
-        const qc = await runMultiLayerQC(lead, relevance, priority, enrichment, outreach, context, false);
+            // 8. Multi-Layer Quality Control (Stage 8)
+            const qc = await runMultiLayerQC(lead, relevance, priority, enrichment, outreach, context, false);
 
-        const contactDisplay = [lead.contact.phone, lead.contact.email].filter(Boolean).join(' | ') || 'No contact provided';
+            const contactDisplay = [lead.contact.phone, lead.contact.email].filter(Boolean).join(' | ') || 'No contact provided';
 
-        processedList.push({
-          lead_id: lead.lead_id,
-          name: lead.name,
-          contact: contactDisplay,
-          location: lead.location || 'Unknown',
-          source: lead.source,
-          duplicate_status: lead.duplicate_status,
-          data_quality_score: lead.data_quality_score,
-          data_issues_count: lead.data_issues.length,
-          
-          relevant: relevance.relevant,
-          relevance_classification: relevance.classification,
-          relevance_score: relevance.relevance_score,
-          relevance_confidence: relevance.relevance_confidence,
-          relevance_reason: relevance.relevance_reason,
+            return {
+              lead_id: lead.lead_id,
+              name: lead.name,
+              contact: contactDisplay,
+              location: lead.location || 'Unknown',
+              source: lead.source,
+              duplicate_status: lead.duplicate_status,
+              data_quality_score: lead.data_quality_score,
+              data_issues_count: lead.data_issues.length,
+              
+              relevant: relevance.relevant,
+              relevance_classification: relevance.classification,
+              relevance_score: relevance.relevance_score,
+              relevance_confidence: relevance.relevance_confidence,
+              relevance_reason: relevance.relevance_reason,
+              ai_error: relevance.ai_error,
+              ai_error_message: relevance.ai_error_message,
 
-          profile: enrichment.profile.summary,
-          intent: enrichment.intent.summary,
-          need: enrichment.needs.primary_need,
-          primary_objection: enrichment.objections[0]?.description || 'None detected',
-          next_action: enrichment.recommended_next_action.action_detail,
-          next_action_category: enrichment.recommended_next_action.category,
-          opportunity: enrichment.opportunity.description,
-          missing_information: enrichment.missing_information.join('; ') || 'None',
+              profile: enrichment.profile.summary,
+              intent: enrichment.intent.summary,
+              need: enrichment.needs.primary_need,
+              primary_objection: enrichment.objections[0]?.description || 'None detected',
+              next_action: enrichment.recommended_next_action.action_detail,
+              next_action_category: enrichment.recommended_next_action.category,
+              opportunity: enrichment.opportunity.description,
+              missing_information: enrichment.missing_information.join('; ') || 'None',
 
-          priority: priority.priority,
-          priority_score: priority.priority_score,
-          priority_reason: priority.priority_reason,
-          priority_drivers: priority.drivers,
+              priority: priority.priority,
+              priority_score: priority.priority_score,
+              priority_reason: priority.priority_reason,
+              priority_drivers: priority.drivers,
 
-          outreach_strategy: outreach.outreach_strategy,
-          personalization_points: outreach.personalization_points,
-          message_angle: outreach.message_angle,
-          cta: outreach.cta,
-          outreach: outreach.outreach,
+              outreach_strategy: outreach.outreach_strategy,
+              personalization_points: outreach.personalization_points,
+              message_angle: outreach.message_angle,
+              cta: outreach.cta,
+              outreach: outreach.outreach,
 
-          qc_status: qc.qc_status,
-          qc_reason: qc.qc_reason,
-          qc_issues: qc.qc_issues,
-          review_required: qc.review_required,
+              qc_status: qc.qc_status,
+              qc_reason: qc.qc_reason,
+              qc_issues: qc.qc_issues,
+              review_required: qc.review_required,
 
-          cleaned: lead,
-          relevance,
-          enrichment,
-          priority_details: priority,
-          outreach_details: outreach,
-          qc,
-        });
-      } catch (err: any) {
-        // Resilient row-level error handling: One lead error does not crash entire batch!
-        processedList.push({
-          lead_id: lead.lead_id,
-          name: lead.name,
-          contact: lead.contact.phone || lead.contact.email || 'None',
-          location: lead.location || 'Unknown',
-          source: lead.source,
-          duplicate_status: lead.duplicate_status,
-          data_quality_score: lead.data_quality_score,
-          data_issues_count: lead.data_issues.length,
-          relevant: false,
-          relevance_classification: 'uncertain',
-          relevance_score: 30,
-          relevance_confidence: 0.3,
-          relevance_reason: `Processing error: ${err.message}`,
-          priority: 'Low',
-          priority_score: 30,
-          priority_reason: 'Processing error fallback',
-          priority_drivers: ['Error fallback'],
-          qc_status: 'flagged_review',
-          qc_reason: `Row error: ${err.message}`,
-          qc_issues: [{ layer: 'layer1_schema', severity: 'high', issue: err.message, recommendation: 'Retry lead' }],
-          review_required: true,
-          cleaned: lead,
-          qc: {
-            qc_status: 'flagged_review',
-            qc_reason: err.message,
-            qc_issues: [],
-            review_required: true,
-            checks: {
-              layer1_schema_valid: false,
-              layer2_consistency_valid: true,
-              layer3_evidence_grounded: false,
-              layer4_no_contradictions: true,
-              layer5_ai_reviewer_passed: false,
-            },
-            audited_by: 'multi_layer_qc',
-          },
-        });
-      }
+              cleaned: lead,
+              relevance,
+              enrichment,
+              priority_details: priority,
+              outreach_details: outreach,
+              qc,
+            } as ProcessedLead;
+          } catch (err: any) {
+            // Resilient row-level error handling: AI failure must NOT be converted to Not Relevant!
+            return {
+              lead_id: lead.lead_id,
+              name: lead.name,
+              contact: lead.contact.phone || lead.contact.email || 'None',
+              location: lead.location || 'Unknown',
+              source: lead.source,
+              duplicate_status: lead.duplicate_status,
+              data_quality_score: lead.data_quality_score,
+              data_issues_count: lead.data_issues.length,
+              relevant: true,
+              relevance_classification: 'ai_error',
+              relevance_score: 50,
+              relevance_confidence: 0.0,
+              relevance_reason: `AI processing failure: ${err.message}. Routed to human review.`,
+              ai_error: true,
+              ai_error_message: err.message,
+              priority: 'Medium',
+              priority_score: 50,
+              priority_reason: 'Preliminary priority pending SDR review due to AI error',
+              priority_drivers: ['AI error fallback — manual review required'],
+              qc_status: 'flagged_review',
+              qc_reason: `Row error: ${err.message}`,
+              qc_issues: [{ layer: 'layer1_schema', severity: 'high', issue: err.message, recommendation: 'Retry lead' }],
+              review_required: true,
+              cleaned: lead,
+              qc: {
+                qc_status: 'flagged_review',
+                qc_reason: err.message,
+                qc_issues: [],
+                review_required: true,
+                checks: {
+                  layer1_schema_valid: false,
+                  layer2_consistency_valid: true,
+                  layer3_evidence_grounded: false,
+                  layer4_no_contradictions: true,
+                  layer5_ai_reviewer_passed: false,
+                },
+                audited_by: 'multi_layer_qc',
+              },
+            } as ProcessedLead;
+          }
+        })
+      );
+      processedList.push(...chunkResults);
     }
 
     currentProcessedLeads = processedList;
@@ -316,9 +329,10 @@ export async function processPipelineHandler(req: Request, res: Response) {
         average_quality_score: Math.round(cleanedLeads.reduce((acc, l) => acc + l.data_quality_score, 0) / (cleanedLeads.length || 1)),
       },
       relevance_summary: {
-        relevant_count: processedList.filter(l => l.relevant).length,
+        relevant_count: processedList.filter(l => l.relevant && l.relevance_classification === 'relevant').length,
         not_relevant_count: processedList.filter(l => !l.relevant && l.relevance_classification === 'not_relevant').length,
         uncertain_count: processedList.filter(l => l.relevance_classification === 'uncertain').length,
+        ai_error_count: processedList.filter(l => l.relevance_classification === 'ai_error').length,
         review_required_count: processedList.filter(l => l.review_required).length,
         hard_disqualified_count: processedList.filter(l => l.relevance?.hard_disqualifier !== null && l.relevance?.hard_disqualifier !== undefined).length,
       },
@@ -343,6 +357,7 @@ export async function processPipelineHandler(req: Request, res: Response) {
       data: {
         summary,
         leads: processedList,
+        ai_stats: getAiCallStats(),
       },
     } as ApiResponse);
   } catch (error: any) {

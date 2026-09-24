@@ -7,6 +7,8 @@ import { GoogleGenAI } from '@google/genai';
 import { resolveGeminiApiKey, isGeminiConfigured } from '../../config/env.ts';
 
 let aiClientInstance: GoogleGenAI | null = null;
+let successfulAiCalls = 0;
+let failedAiCalls = 0;
 
 export function getGeminiClient(): GoogleGenAI {
   const apiKey = resolveGeminiApiKey();
@@ -19,50 +21,79 @@ export function getGeminiClient(): GoogleGenAI {
   if (!aiClientInstance) {
     aiClientInstance = new GoogleGenAI({
       apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
     });
   }
 
   return aiClientInstance;
 }
 
-export const RECOMMENDED_GEMINI_MODEL = 'gemini-2.5-flash';
+export const RECOMMENDED_GEMINI_MODEL = 'gemini-3.5-flash';
+export const CANDIDATE_GEMINI_MODELS = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'];
+
+export function getAiCallStats() {
+  return {
+    model: RECOMMENDED_GEMINI_MODEL,
+    successfulCalls: successfulAiCalls,
+    failedCalls: failedAiCalls,
+  };
+}
+
+export function resetAiCallStats() {
+  successfulAiCalls = 0;
+  failedAiCalls = 0;
+}
 
 /**
- * Executes a Gemini call with exponential backoff and jitter for transient 429/503 errors.
+ * Executes a Gemini call with exponential backoff and automatic model fallback for transient 429/503 errors.
  */
 export async function executeGeminiWithRetry<T>(
-  operation: (ai: GoogleGenAI) => Promise<T>,
-  maxRetries = 3
+  operation: (ai: GoogleGenAI, model: string) => Promise<T>,
+  maxRetries = 2
 ): Promise<T> {
   const ai = getGeminiClient();
-  let delay = 1000;
+  let lastError: any = null;
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      return await operation(ai);
-    } catch (error: any) {
-      const isRateLimit =
-        error?.status === 429 ||
-        error?.message?.includes('429') ||
-        error?.message?.includes('quota') ||
-        error?.message?.includes('rate');
-      const isTransient =
-        error?.status === 503 ||
-        error?.message?.includes('503') ||
-        error?.message?.includes('overloaded');
+  for (const model of CANDIDATE_GEMINI_MODELS) {
+    let delay = 1000;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const result = await operation(ai, model);
+        successfulAiCalls++;
+        return result;
+      } catch (error: any) {
+        lastError = error;
+        const isRateLimit =
+          error?.status === 429 ||
+          error?.message?.includes('429') ||
+          error?.message?.includes('quota') ||
+          error?.message?.includes('rate');
+        const isTransient =
+          error?.status === 503 ||
+          error?.message?.includes('503') ||
+          error?.message?.includes('overloaded') ||
+          error?.message?.includes('UNAVAILABLE') ||
+          error?.message?.includes('high demand');
 
-      if ((isRateLimit || isTransient) && attempt < maxRetries) {
-        const jitter = Math.random() * 400;
-        await new Promise((resolve) => setTimeout(resolve, delay + jitter));
-        delay *= 2;
-        continue;
+        if ((isRateLimit || isTransient) && attempt < maxRetries) {
+          const jitter = Math.random() * 400;
+          await new Promise((resolve) => setTimeout(resolve, delay + jitter));
+          delay *= 2;
+          continue;
+        }
+
+        // Move to next candidate model if current model encounters quota/demand issues
+        break;
       }
-
-      throw error;
     }
   }
 
-  throw new Error('Gemini call failed after retries.');
+  failedAiCalls++;
+  throw lastError || new Error('Gemini call failed across available models.');
 }
 
 export async function checkAiHealth(): Promise<{

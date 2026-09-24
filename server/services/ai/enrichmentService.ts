@@ -176,9 +176,9 @@ GROUNDING RULES:
 Return strictly structured JSON.`;
 
   try {
-    const raw = await executeGeminiWithRetry(async (ai) => {
+    const raw = await executeGeminiWithRetry(async (ai, activeModel) => {
       const response = await ai.models.generateContent({
-        model: RECOMMENDED_GEMINI_MODEL,
+        model: activeModel || RECOMMENDED_GEMINI_MODEL,
         contents: prompt,
         config: {
           responseMimeType: 'application/json',

@@ -143,9 +143,9 @@ EVALUATION RULES:
 Return strictly structured JSON.`;
 
   try {
-    const rawResult = await executeGeminiWithRetry(async (ai) => {
+    const rawResult = await executeGeminiWithRetry(async (ai, activeModel) => {
       const response = await ai.models.generateContent({
-        model: RECOMMENDED_GEMINI_MODEL,
+        model: activeModel || RECOMMENDED_GEMINI_MODEL,
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
@@ -210,26 +210,30 @@ Return strictly structured JSON.`;
       review_reasons: reviewReasons,
     };
   } catch (error: any) {
-    // Graceful per-lead fallback: Never crash pipeline if one lead's AI call fails
+    // Robust AI Error Handling:
+    // AI API failure must NEVER be converted to "Relevant = NO" / "NOT_RELEVANT".
+    // It is explicitly tagged as "ai_error", preserving the error and routing to human review.
     return {
       lead_id: lead.lead_id,
-      relevant: false,
-      classification: 'uncertain',
-      relevance_score: 40,
-      relevance_confidence: 0.4,
-      relevance_reason: `Automated relevance evaluation fallback: ${error?.message || 'AI timeout'}`,
+      relevant: true, // Do NOT silently mark as Not Relevant / Excluded
+      classification: 'ai_error',
+      relevance_score: 50, // Neutral placeholder score
+      relevance_confidence: 0.0,
+      relevance_reason: `AI classification temporarily unavailable: ${error?.message || 'Gemini API call failed'}. Routed to human review.`,
       dimensions: {
         need_fit_score: 15,
         customer_fit_score: 10,
         intent_score: 10,
-        eligibility_score: 5,
-        evidence_quality_score: 0,
+        eligibility_score: 10,
+        evidence_quality_score: 5,
       },
-      evidence: [{ fact: 'Raw inquiry preserved', category: 'STATED' }],
-      unknowns: ['Full evaluation pending retry'],
+      evidence: [{ fact: 'Raw inquiry preserved without alteration', category: 'STATED' }],
+      unknowns: ['Full evaluation pending SDR review / AI retry'],
       hard_disqualifier: null,
       review_required: true,
-      review_reasons: ['AI evaluation encountered an error; routed to human review'],
+      review_reasons: [`AI Service Error: ${error?.message || 'Gemini API call failed'} - Routed to Human Review Queue`],
+      ai_error: true,
+      ai_error_message: error?.message || 'Gemini API call failed',
     };
   }
 }

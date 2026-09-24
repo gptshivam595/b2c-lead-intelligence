@@ -72,6 +72,7 @@ async function startServer() {
   // Processing & Cleaning
   api.post('/clean', upload.single('file'), cleanDatasetHandler);
   api.post('/process', upload.single('file'), processPipelineHandler);
+  api.post('/pipeline/process', upload.single('file'), processPipelineHandler);
   api.post('/upload', upload.single('file'), cleanDatasetHandler);
 
   // Leads & Review

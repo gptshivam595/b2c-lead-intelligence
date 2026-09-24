@@ -148,7 +148,7 @@ export interface EvidenceItem {
 export interface RelevanceAssessment {
   lead_id: string;
   relevant: boolean;
-  classification: 'relevant' | 'not_relevant' | 'uncertain';
+  classification: 'relevant' | 'not_relevant' | 'uncertain' | 'ai_error';
   relevance_score: number; // 0 - 100 calculated by application code
   relevance_confidence: number; // 0.0 - 1.0
   relevance_reason: string;
@@ -158,6 +158,8 @@ export interface RelevanceAssessment {
   hard_disqualifier: string | null;
   review_required: boolean;
   review_reasons: string[];
+  ai_error?: boolean;
+  ai_error_message?: string;
 }
 
 export interface GroundedInsight {
@@ -289,10 +291,12 @@ export interface ProcessedLead {
   
   // Phase 4
   relevant: boolean;
-  relevance_classification: 'relevant' | 'not_relevant' | 'uncertain';
+  relevance_classification: 'relevant' | 'not_relevant' | 'uncertain' | 'ai_error';
   relevance_score: number;
   relevance_confidence: number;
   relevance_reason: string;
+  ai_error?: boolean;
+  ai_error_message?: string;
   
   // Phase 5
   profile?: string;
@@ -354,6 +358,7 @@ export interface PipelineExecutionSummary {
     relevant_count: number;
     not_relevant_count: number;
     uncertain_count: number;
+    ai_error_count?: number;
     review_required_count: number;
     hard_disqualified_count: number;
   };
